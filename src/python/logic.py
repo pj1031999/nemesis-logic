@@ -104,7 +104,7 @@ def get_proto(inst):
         job.custom = False
         job.submit.CopyFrom(result)
         return job
-    print('get_proto(): ERROR job without type', file=sys.stderr)
+    print('get_proto(): ERROR job without type')
 
 
 class Instance():
@@ -196,14 +196,14 @@ def heartbeats(addr, port):
             mutex.acquire()
             if data.id in workers:
                 if time.time() - workers[data.id].heartbeat > 10.0:
-                    print('heartbeats(): worker {} now working'.format(data.id), file=sys.stderr)
+                    print('heartbeats(): worker {} now working'.format(data.id))
                 workers[data.id].heartbeat = time.time()
             else:
                 workers[data.id] = Worker(worker_id = data.id, host = data.name, addr = data.addr, port = data.port, heartbeat = time.time())
-                print('heartbeats(): create worker {}'.format(workers[data.id]), file=sys.stderr)
+                print('heartbeats(): create worker {}'.format(workers[data.id]))
             mutex.release()
         except:
-            print('heartbeats(): data is corrupted', file=sys.stderr)
+            print('heartbeats(): data is corrupted')
 
 def fix_workers():
     while True:
@@ -211,7 +211,7 @@ def fix_workers():
         mutex.acquire()
         for worker in workers:
             if time.time() - workers[worker].heartbeat >= 10 and workers[worker].instance != None:
-                print('fix_workers(): {} is corrupted'.format(worker), file=sys.stderr)
+                print('fix_workers(): {} is corrupted'.format(worker))
                 Jobs.put(workers[worker].instance)
                 workers[worker].instance = None
         mutex.release()
@@ -221,7 +221,7 @@ def run(data, addr, port, worker_id):
     socket = context.socket(zmq.REQ)
     socket.connect("tcp://%s:%s" % (addr, port))
 
-    print('run(): send ({},{}) to {}:{}'.format(data.submit.id, data.custom_job.id, addr, port), file=sys.stderr)
+    print('run(): send ({},{}) to {}:{}'.format(data.submit.id, data.custom_job.id, addr, port))
 
     socket.send(data.SerializeToString())
     msg = socket.recv()
@@ -234,14 +234,14 @@ def run(data, addr, port, worker_id):
             workers[worker_id].instance = None
             return
         Rated.put(result)
-        print('run(): get result for ({},{})'.format(result.status.id, result.custom_status.id), file=sys.stderr)
+        print('run(): get result for ({},{})'.format(result.status.id, result.custom_status.id))
         mutex.acquire()
         workers[worker_id].instance = None
-        print('run(): {} is free'.format(worker_id), file=sys.stderr)
+        print('run(): {} is free'.format(worker_id))
         mutex.release()
         return
     except:
-        print('run(): data is corrupted', file=sys.stderr)
+        print('run(): data is corrupted')
     mutex.release()
 
 
@@ -255,10 +255,10 @@ def server(addr, port):
         try:
             job.ParseFromString(msg)
         except:
-            print('server(): data is corrupted', file=sys.stderr)
+            print('server(): data is corrupted')
             continue
         if job.IsInitialized() == False:
-            print('server(): job isn\'t initialized', file=sys.stderr)
+            print('server(): job isn\'t initialized')
             continue
 
         if job.custom == True:
@@ -271,7 +271,6 @@ def server(addr, port):
 def compute_jobs():
     while True:
         if Jobs.empty():
-            print('compute_jobs(): waiting for new jobs', file=sys.stderr)
             time.sleep(5)
             continue
 
@@ -280,7 +279,7 @@ def compute_jobs():
             mutex.acquire()
             for w in workers:
                 if workers[w].instance == None and time.time() - workers[w].heartbeat <= 5.0:
-                    print('compute_jobs(): start job in {}'.format(w), file=sys.stderr)
+                    print('compute_jobs(): start job in {}'.format(w))
                     search_free_worker = False
                     workers[w].instance = Jobs.get()
                     proto = get_proto(workers[w].instance)
@@ -291,7 +290,7 @@ def compute_jobs():
             mutex.release()
 
             if search_free_worker:
-                print('compute_jobs(): waiting for free worker', file=sys.stderr)
+                print('compute_jobs(): waiting for free worker')
                 time.sleep(1)
 
 def compute_rated():
@@ -330,7 +329,7 @@ def compute_rated():
         database.session.commit()
 
 def handler(signum, frame):
-    print('logic.py: shutting down ({})'.format(signum), file=sys.stderr)
+    print('logic.py: shutting down ({})'.format(signum))
     mutex.acquire()
     for inst in database.session.query(database.Custom_Invocation).filter(database.Custom_Invocation.state == 'running').all():
         inst.state = 'waiting'
@@ -382,14 +381,13 @@ def main_local():
 
     while True:
         time.sleep(10)
-        print('main(): is still alive')
         for w in workers:
             if time.time() - workers[w].heartbeat > 5.0:
-                print('main(): {} not responding'.format(w), file=sys.stderr)
+                print('main(): {} not responding'.format(w))
             elif workers[w].instance == None:
-                print('main(): {} is free'.format(w), file=sys.stderr)
+                print('main(): {} is free'.format(w))
             else:
-                print('main(): {} is busy'.format(w), file=sys.stderr)
+                print('main(): {} is busy'.format(w))
 
 
 def main():
@@ -429,14 +427,13 @@ def main():
 
     while True:
         time.sleep(10)
-        print('main(): is still alive')
         for w in workers:
             if time.time() - workers[w].heartbeat > 5.0:
-                print('main(): {} not responding'.format(w), file=sys.stderr)
+                print('main(): {} not responding'.format(w))
             elif workers[w].instance == None:
-                print('main(): {} is free'.format(w), file=sys.stderr)
+                print('main(): {} is free'.format(w))
             else:
-                print('main(): {} is busy'.format(w), file=sys.stderr)
+                print('main(): {} is busy'.format(w))
 
 
 
