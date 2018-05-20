@@ -96,6 +96,7 @@ def get_proto(inst):
         result.user_id = NS.user_id
         result.lang = database_proto.rev_parse_lang(NS.lang)
         result.subsection_id = NS.subsection_id
+        result.rejudge = inst.rejudge
 
         with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(result.id), 'src'), 'rb') as source:
             result.code = source.read()
@@ -109,10 +110,11 @@ def get_proto(inst):
 
 class Instance():
 
-    def __init__(self, submit_id = None, custom_id = None, priority = 0):
+    def __init__(self, submit_id = None, custom_id = None, priority = 0, rejudge = False):
         self.submit_id = submit_id
         self.custom_id = custom_id
         self.priority = priority
+        self.rejudge = rejudge
 
     def __repr__(self):
         return '<submit_id=%s, custom_id=%s, priority=%s>' % (self.id, self.submit_id, self.custom_id, self.priority)
@@ -142,21 +144,34 @@ def create_custom(proto):
         source.write(proto.source)
     with open(os.path.join(NEMESIS_DATA_PATH, 'customs', str(CI.id), 'in'), 'wb') as input_file:
         input_file.write(proto.test.input)
-    inst = Instance(custom_id = CI.id, priority = get_priority(proto.user_id))
+    inst = Instance(custom_id = CI.id, priority = get_priority(proto.user_id), rejudge = False)
     return inst
 
 def create_submit(proto):
-    LS = database.Submit(user_id = proto.user_id, task_id = proto.task_id, state = 'waiting', lang = database_proto.parse_lang(proto.lang), date = datetime.datetime.now(), points = 0, compiled = False, acm = False, subsection_id = proto.subsection_id)
-    database.session.add(LS)
+    rejudge = False
+
+    CD = database.session.query(database.Submit).filter(database.Submit.id == proto.id).first()
+    if CD:
+        rejudge = True
+
+    if rejudge:
+        CD.state = 'waiting'
+        CD.points = 0
+        CD.compiled = False
+        CD.acm = False
+    else:
+        LS = database.Submit(user_id = proto.user_id, task_id = proto.task_id, state = 'waiting', lang = database_proto.parse_lang(proto.lang), date = datetime.datetime.now(), points = 0, compiled = False, acm = False, subsection_id = proto.subsection_id)
+        database.session.add(LS)
     database.session.commit()
 
-    if not os.path.exists(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id))):
-        os.makedirs(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id)))
-
-    with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id), 'src'), 'wb') as source:
-        source.write(proto.code)
-
-    inst = Instance(submit_id = LS.id, priority = get_priority(proto.user_id))
+    if not rejudge:
+        if not os.path.exists(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id))):
+            os.makedirs(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id)))
+        with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(LS.id), 'src'), 'wb') as source:
+            source.write(proto.code)
+        inst = Instance(submit_id = LS.id, priority = get_priority(proto.user_id), rejudge = False)
+    else:
+        inst = Instance(submit_id = CD.id, priority = get_priority(proto.user_id), rejudge = True)
     return inst
 
 class Worker():
@@ -230,7 +245,7 @@ def run(data, addr, port, worker_id):
     try:
         result.ParseFromString(msg)
         if result.IsInitialized() == False:
-            Jobs.put(workers[worker_id].instnace)
+            Jobs.put(workers[worker_id].instance)
             workers[worker_id].instance = None
             return
         Rated.put(result)
@@ -319,11 +334,23 @@ def compute_rated():
             with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(NS_DB.id), 'compile_log'), 'wb') as compile_log:
                 compile_log.write(bytes(submition.status.compile_log.encode('utf-8')))
 
-            for grp in submition.status.groups:
-                for tt in grp.tests:
-                    test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
-                    database.session.add(test)
-                    database.session.commit()
+            if not submition.status.rejudge:
+                for grp in submition.status.groups:
+                    for tt in grp.tests:
+                        test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
+                        database.session.add(test)
+                        database.session.commit()
+            else:
+                for grp in submition.status.groups:
+                    for tt in grp.tests:
+                        TB = database.session.query(database.Test_submit).filter(database.Test_submit.submit_id == submition.status.id and database.Test_submit.group_id == grp.id and database.Test_submit.test_id == tt.id).first()
+                        if not TB:
+                            print('compute_rated(): rejudge: {} not in db'.format(submition.status.id))
+                        else:
+                            TB.time_usage = tt.time
+                            TB.memory_usage = tt.memory
+                            TB.status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error)
+                            database.session.commit()
 
 
         database.session.commit()

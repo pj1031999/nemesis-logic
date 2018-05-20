@@ -135,13 +135,21 @@ class Test(Base):
     memory_limit = Column(Integer)
     time_limit = Column(Integer)
 
+class Sessions(Base):
+    __tablename__ = 'sessions'
+
+    id = Column(Integer, Sequence('sessions_id_seq'), primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    sid = Column(String)
+    date = Column(DateTime(timezone=True))
+
 
 NEMESIS_USER    = os.getenv("NEMESIS_USER")
 NEMESIS_PASSWD  = os.getenv("NEMESIS_PASSWD")
 NEMESIS_HOST    = os.getenv("NEMESIS_HOST")
 NEMESIS_DB      = os.getenv("NEMESIS_DB")
 
-engine = create_engine('postgresql+psycopg2://%s:%s@%s/%s' % (NEMESIS_USER, NEMESIS_PASSWD, NEMESIS_HOST, NEMESIS_DB))
+engine = create_engine('postgresql+psycopg2://%s:%s@%s/%s' % (NEMESIS_USER, NEMESIS_PASSWD, NEMESIS_HOST, NEMESIS_DB), encoding="utf8")
 Session = sessionmaker(bind=engine)
 session = scoped_session(Session)
 
@@ -159,3 +167,4 @@ def init_db():
     Submit.metadata.create_all(engine)
     Test_submit.metadata.create_all(engine)
     Test.metadata.create_all(engine)
+    Sessions.metadata.create_all(engine)
