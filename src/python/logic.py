@@ -194,42 +194,50 @@ Jobs = queue.PriorityQueue()
 Rated = queue.Queue()
 
 def heartbeats(addr, port):
-    context = zmq.Context()
-    socket = context.socket(zmq.PULL)
-    socket.bind("tcp://%s:%s" % (addr, port))
-
     while True:
-        msg = socket.recv()
-        data = nemesis_pb2.Heartbeat()
-
         try:
-            data.ParseFromString(msg)
+            context = zmq.Context()
+            socket = context.socket(zmq.PULL)
+            socket.bind("tcp://%s:%s" % (addr, port))
 
-            if data.IsInitialized() == False:
-                continue
+            while True:
+                msg = socket.recv()
+                data = nemesis_pb2.Heartbeat()
 
-            mutex.acquire()
-            if data.id in workers:
-                if time.time() - workers[data.id].heartbeat > 10.0:
-                    print('heartbeats(): worker {} now working'.format(data.id))
-                workers[data.id].heartbeat = time.time()
-            else:
-                workers[data.id] = Worker(worker_id = data.id, host = data.name, addr = data.addr, port = data.port, heartbeat = time.time())
-                print('heartbeats(): create worker {}'.format(workers[data.id]))
-            mutex.release()
+                try:
+                    data.ParseFromString(msg)
+
+                    if data.IsInitialized() == False:
+                        continue
+
+                    mutex.acquire()
+                    if data.id in workers:
+                        if time.time() - workers[data.id].heartbeat > 10.0:
+                            print('heartbeats(): worker {} now working'.format(data.id))
+                        workers[data.id].heartbeat = time.time()
+                    else:
+                        workers[data.id] = Worker(worker_id = data.id, host = data.name, addr = data.addr, port = data.port, heartbeat = time.time())
+                        print('heartbeats(): create worker {}'.format(workers[data.id]))
+                    mutex.release()
+                except:
+                    print('heartbeats(): data is corrupted')
         except:
-            print('heartbeats(): data is corrupted')
+            continue
 
 def fix_workers():
     while True:
-        time.sleep(5)
-        mutex.acquire()
-        for worker in workers:
-            if time.time() - workers[worker].heartbeat >= 10 and workers[worker].instance != None:
-                print('fix_workers(): {} is corrupted'.format(worker))
-                Jobs.put(workers[worker].instance)
-                workers[worker].instance = None
-        mutex.release()
+        try:
+            while True:
+                time.sleep(5)
+                mutex.acquire()
+                for worker in workers:
+                    if time.time() - workers[worker].heartbeat >= 10 and workers[worker].instance != None:
+                        print('fix_workers(): {} is corrupted'.format(worker))
+                        Jobs.put(workers[worker].instance)
+                        workers[worker].instance = None
+                mutex.release()
+        except:
+            continue
 
 def run(data, addr, port, worker_id):
     context = zmq.Context()
@@ -261,92 +269,104 @@ def run(data, addr, port, worker_id):
 
 
 def server(addr, port):
-    context = zmq.Context()
-    socket = context.socket(zmq.PULL)
-    socket.bind("tcp://%s:%s" % (addr, port))
     while True:
-        msg = socket.recv()
-        job = nemesis_pb2.LogicJob()
         try:
-            job.ParseFromString(msg)
-        except:
-            print('server(): data is corrupted')
-            continue
-        if job.IsInitialized() == False:
-            print('server(): job isn\'t initialized')
-            continue
+            context = zmq.Context()
+            socket = context.socket(zmq.PULL)
+            socket.bind("tcp://%s:%s" % (addr, port))
+            while True:
+                msg = socket.recv()
+                job = nemesis_pb2.LogicJob()
+                try:
+                    job.ParseFromString(msg)
+                except:
+                    print('server(): data is corrupted')
+                    continue
+                if job.IsInitialized() == False:
+                    print('server(): job isn\'t initialized')
+                    continue
 
-        if job.custom == True:
-            inst = create_custom(job.custom_job)
-            Jobs.put(inst)
-        else:
-            inst = create_submit(job.submit)
-            Jobs.put(inst)
+                if job.custom == True:
+                    inst = create_custom(job.custom_job)
+                    Jobs.put(inst)
+                else:
+                    inst = create_submit(job.submit)
+                    Jobs.put(inst)
+        except:
+            continue;
 
 def compute_jobs():
     while True:
-        if Jobs.empty():
-            time.sleep(5)
+        try:
+            while True:
+                if Jobs.empty():
+                    time.sleep(5)
+                    continue
+
+                search_free_worker = True
+                while search_free_worker:
+                    mutex.acquire()
+                    for w in workers:
+                        if workers[w].instance == None and time.time() - workers[w].heartbeat <= 5.0:
+                            print('compute_jobs(): start job in {}'.format(w))
+                            search_free_worker = False
+                            workers[w].instance = Jobs.get()
+                            proto = get_proto(workers[w].instance)
+                            t = threading.Thread(target = run, args = (proto, workers[w].addr, workers[w].port, w))
+                            t.daemon = True
+                            t.start()
+                            break
+                    mutex.release()
+
+                    if search_free_worker:
+                        print('compute_jobs(): waiting for free worker')
+                        time.sleep(1)
+        except:
             continue
-
-        search_free_worker = True
-        while search_free_worker:
-            mutex.acquire()
-            for w in workers:
-                if workers[w].instance == None and time.time() - workers[w].heartbeat <= 5.0:
-                    print('compute_jobs(): start job in {}'.format(w))
-                    search_free_worker = False
-                    workers[w].instance = Jobs.get()
-                    proto = get_proto(workers[w].instance)
-                    t = threading.Thread(target = run, args = (proto, workers[w].addr, workers[w].port, w))
-                    t.daemon = True
-                    t.start()
-                    break
-            mutex.release()
-
-            if search_free_worker:
-                print('compute_jobs(): waiting for free worker')
-                time.sleep(1)
 
 def compute_rated():
     while True:
-        if Rated.empty():
-            time.sleep(1)
+        try:
+            while True:
+                if Rated.empty():
+                    time.sleep(1)
+                    continue
+
+                submition = Rated.get()
+
+                if submition.custom == True:
+                    CI_DB = database.session.query(database.Custom_Invocation).filter(database.Custom_Invocation.id == submition.custom_status.id).first()
+                    CI_DB.time_usage = submition.custom_status.time
+                    CI_DB.memory_usage = submition.custom_status.memory
+                    CI_DB.state = database_proto.parse_status_code(submition.custom_status.status, False, True, submition.custom_status.compiled, submition.system_error)
+                    with open(os.path.join(NEMESIS_DATA_PATH, 'customs', str(CI_DB.id), 'compile_log'), 'wb') as compile_log:
+                        compile_log.write(bytes(submition.custom_status.compile_log.encode('utf-8')))
+                    with open(os.path.join(NEMESIS_DATA_PATH, 'customs', str(CI_DB.id), 'output'), 'wb') as output:
+                        output.write(submition.custom_status.out)
+                else:
+                    NS_DB = database.session.query(database.Submit).filter(database.Submit.id == submition.status.id).first()
+                    NS_DB.points = submition.status.points
+                    NS_DB.compiled = submition.status.compiled
+                    NS_DB.acm = submition.status.acm
+                    NS_DB.state = database_proto.parse_status_code(submition.status.status, submition.status.acm, False, submition.status.compiled, submition.system_error)
+                    with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(NS_DB.id), 'compile_log'), 'wb') as compile_log:
+                        compile_log.write(bytes(submition.status.compile_log.encode('utf-8')))
+
+                    if submition.status.rejudge:
+                        tests = database.session.query(database.Test_submit).filter(database.Test_submit.submit_id == submition.status.id).all()
+                        for test in tests:
+                            database.session.delete(test)
+                            database.session.commit()
+
+                    for grp in submition.status.groups:
+                        for tt in grp.tests:
+                            test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
+                            database.session.add(test)
+                            database.session.commit()
+
+                database.session.commit()
+        except:
             continue
-
-        submition = Rated.get()
-
-        if submition.custom == True:
-            CI_DB = database.session.query(database.Custom_Invocation).filter(database.Custom_Invocation.id == submition.custom_status.id).first()
-            CI_DB.time_usage = submition.custom_status.time
-            CI_DB.memory_usage = submition.custom_status.memory
-            CI_DB.state = database_proto.parse_status_code(submition.custom_status.status, False, True, submition.custom_status.compiled, submition.system_error)
-            with open(os.path.join(NEMESIS_DATA_PATH, 'customs', str(CI_DB.id), 'compile_log'), 'wb') as compile_log:
-                compile_log.write(bytes(submition.custom_status.compile_log.encode('utf-8')))
-            with open(os.path.join(NEMESIS_DATA_PATH, 'customs', str(CI_DB.id), 'output'), 'wb') as output:
-                output.write(submition.custom_status.out)
-        else:
-            NS_DB = database.session.query(database.Submit).filter(database.Submit.id == submition.status.id).first()
-            NS_DB.points = submition.status.points
-            NS_DB.compiled = submition.status.compiled
-            NS_DB.acm = submition.status.acm
-            NS_DB.state = database_proto.parse_status_code(submition.status.status, submition.status.acm, False, submition.status.compiled, submition.system_error)
-            with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(NS_DB.id), 'compile_log'), 'wb') as compile_log:
-                compile_log.write(bytes(submition.status.compile_log.encode('utf-8')))
-
-            if submition.status.rejudge:
-                tests = database.session.query(database.Test_submit).filter(database.Test_submit.submit_id == submition.status.id).all()
-                for test in tests:
-                    database.session.delete(test)
-                    database.session.commit()
-
-            for grp in submition.status.groups:
-                for tt in grp.tests:
-                    test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
-                    database.session.add(test)
-                    database.session.commit()
-
-        database.session.commit()
 
 def handler(signum, frame):
     print('logic.py: shutting down ({})'.format(signum))
