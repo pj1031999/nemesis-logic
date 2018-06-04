@@ -334,24 +334,17 @@ def compute_rated():
             with open(os.path.join(NEMESIS_DATA_PATH, 'submits', str(NS_DB.id), 'compile_log'), 'wb') as compile_log:
                 compile_log.write(bytes(submition.status.compile_log.encode('utf-8')))
 
-            if not submition.status.rejudge:
-                for grp in submition.status.groups:
-                    for tt in grp.tests:
-                        test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
-                        database.session.add(test)
-                        database.session.commit()
-            else:
-                for grp in submition.status.groups:
-                    for tt in grp.tests:
-                        TB = database.session.query(database.Test_submit).filter(database.Test_submit.submit_id == submition.status.id and database.Test_submit.group_id == grp.id and database.Test_submit.test_id == tt.id).first()
-                        if not TB:
-                            print('compute_rated(): rejudge: {} not in db'.format(submition.status.id))
-                        else:
-                            TB.time_usage = tt.time
-                            TB.memory_usage = tt.memory
-                            TB.status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error)
-                            database.session.commit()
+            if submition.status.rejudge:
+                tests = database.session.query(database.Test_submit).filter(database.Test_submit.submit_id == submition.status.id).all()
+                for test in tests:
+                    database.session.delete(test)
+                    database.session.commit()
 
+            for grp in submition.status.groups:
+                for tt in grp.tests:
+                    test = database.Test_submit(submit_id = submition.status.id, group_id = grp.id, test_id = tt.id, time_usage = tt.time, memory_usage = tt.memory, status = database_proto.parse_status_code(tt.status, tt.verdict, False, submition.status.compiled, submition.system_error))
+                    database.session.add(test)
+                    database.session.commit()
 
         database.session.commit()
 
