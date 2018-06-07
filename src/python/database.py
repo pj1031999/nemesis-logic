@@ -80,7 +80,7 @@ class Task_in_subsection(Base):
 
     id = Column(Integer, Sequence('tasks_in_subsections_id_seq'), primary_key=True)
     task_id = Column(Integer, ForeignKey('tasks.id'))
-    Subsection_id = Column(Integer, ForeignKey('subsections.id'))
+    subsection_id = Column(Integer, ForeignKey('subsections.id'))
     add_date = Column(DateTime(timezone=True))
     release_date = Column(DateTime(timezone=True))
     end_date = Column(DateTime(timezone=True))
