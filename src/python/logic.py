@@ -14,7 +14,7 @@ import threading
 import time
 import zmq
 
-NEMESIS_DATA_PATH = '/srv/nemesis'
+NEMESIS_DATA_PATH = os.getenv('NEMESIS_DATA')
 
 def get_priority(user_id):
     role_dict = {
@@ -32,10 +32,10 @@ def get_task(task_id):
     task_db = database.session.query(database.Task).filter(database.Task.id == task_id)
     result = default_nemesis_proto.default_Task()
 
-    with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), 'checker'), 'rb') as checker_source:
+    with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), 'src', 'checker'), 'rb') as checker_source:
         result.checker = checker_source.read()
 
-    with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), 'solution'), 'rb') as solution_source:
+    with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), 'src', 'solution'), 'rb') as solution_source:
         result.solution = solution_source.read()
 
     groups = {}
@@ -45,7 +45,7 @@ def get_task(task_id):
         tt.id = test.test_id
         tt.time_limit = test.time_limit
         tt.memory_limit = test.memory_limit
-        with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), str(test.group_id), 'in', str(test.test_id)), 'rb') as input_file:
+        with open(os.path.join(NEMESIS_DATA_PATH, 'tasks', str(task_id), 'tests', str(test.group_id), 'in', str(test.test_id)), 'rb') as input_file:
             tt.input = input_file.read()
         if test.group_id in groups:
             groups[test.group_id].append(tt)
@@ -221,7 +221,8 @@ def heartbeats(addr, port):
                     mutex.release()
                 except:
                     print('heartbeats(): data is corrupted')
-        except:
+        except Exception as e:
+            print(e, file=sys.stderr)
             continue
 
 def fix_workers():
@@ -236,7 +237,8 @@ def fix_workers():
                         Jobs.put(workers[worker].instance)
                         workers[worker].instance = None
                 mutex.release()
-        except:
+        except Exception as e:
+            print(e, file=sys.stderr)
             continue
 
 def run(data, addr, port, worker_id):
@@ -263,8 +265,9 @@ def run(data, addr, port, worker_id):
         print('run(): {} is free'.format(worker_id))
         mutex.release()
         return
-    except:
+    except Exception as e:
         print('run(): data is corrupted')
+        print(e, file=sys.stderr)
     mutex.release()
 
 
@@ -292,7 +295,8 @@ def server(addr, port):
                 else:
                     inst = create_submit(job.submit)
                     Jobs.put(inst)
-        except:
+        except Exception as e:
+            print(e, file=sys.stderr)
             continue;
 
 def compute_jobs():
@@ -321,7 +325,8 @@ def compute_jobs():
                     if search_free_worker:
                         print('compute_jobs(): waiting for free worker')
                         time.sleep(1)
-        except:
+        except Exception as e:
+            print(e, file=sys.stderr)
             continue
 
 def compute_rated():
@@ -365,12 +370,22 @@ def compute_rated():
                             database.session.commit()
 
                 database.session.commit()
-        except:
+        except Exception as e:
+            print(e, file=sys.stderr)
             continue
+
+def handler_force_lock_thread():
+    mutex.acquire()
 
 def handler(signum, frame):
     print('logic.py: shutting down ({})'.format(signum))
-    mutex.acquire()
+
+    thread_lock = threading.Thread(target = handler_force_lock_thread)
+    thread_lock.daemon = True
+    thread_lock.start()
+
+    time.sleep(120)
+
     for inst in database.session.query(database.Custom_Invocation).filter(database.Custom_Invocation.state == 'running').all():
         inst.state = 'waiting'
     database.session.commit()
