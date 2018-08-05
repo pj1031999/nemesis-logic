@@ -1,3 +1,6 @@
 [submodule "src/proto"]
 	path = src/proto
 	url = git@github.com:pj1031999/nemesis-proto.git
+[submodule "src/nemesis-db"]
+	path = src/nemesis-db
+	url = git@github.com:pj1031999/nemesis-db.git
